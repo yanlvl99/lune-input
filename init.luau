@@ -1,23 +1,84 @@
---!nocheck
--- lune-input v3.0: Cross-platform input module (FFI Windows, xdotool Linux)
+--!strict
+--[[
+	lune-input v3.0
+	Cross-platform input module
+]]
+
 local ffi = require("@lune/ffi")
 local process = require("@lune/process")
 local task = require("@lune/task")
 
+-- ═══════════════════════════════════════════════════════════════
+-- TIPOS
+-- ═══════════════════════════════════════════════════════════════
+
 export type KeyCode = number | string
 export type MouseButton = "left" | "right" | "middle"
 export type Point = { x: number, y: number }
-export type MoveOptions = { duration: number?, easing: string?, onComplete: (() -> ())?, onError: ((string) -> ())? }
+export type EasingFn = (t: number) -> number
+
+export type MoveOptions = {
+	duration: number?,
+	easing: EasingFn?,
+	onComplete: (() -> ())?,
+	onError: ((err: string) -> ())?,
+}
+
 export type Hotkey = {
+	keys: { KeyCode },
+	codes: { number },
+	enabled: boolean,
 	Fire: (self: Hotkey) -> (),
 	Enable: (self: Hotkey) -> (),
 	Disable: (self: Hotkey) -> (),
 	IsEnabled: (self: Hotkey) -> boolean,
-	keys: { KeyCode },
-	enabled: boolean,
 }
 
-local KeyNames: { [string]: number } = {
+export type InputModule = {
+	Key: { [string]: number | string },
+	wait: (ms: number) -> (),
+	down: (key: KeyCode) -> (),
+	up: (key: KeyCode) -> (),
+	tap: (key: KeyCode) -> (),
+	press: (key: KeyCode) -> (),
+	write: (text: string, delayMs: number?) -> (),
+	typeText: (text: string, delayMs: number?) -> (),
+	combo: (...KeyCode) -> (),
+	hotkey: (...KeyCode) -> Hotkey,
+	isKeyDown: (key: KeyCode) -> boolean,
+	mousePosition: () -> Point,
+	mouseMove: (x: number, y: number, opts: MoveOptions?) -> (),
+	mouseDown: (button: MouseButton?) -> (),
+	mouseUp: (button: MouseButton?) -> (),
+	mouseClick: (button: MouseButton?) -> (),
+	mouseDoubleClick: (button: MouseButton?) -> (),
+	mouseScroll: (delta: number) -> (),
+	mouseDrag: (tx: number, ty: number, button: MouseButton?, duration: number?) -> (),
+	onEscapeHold: (secs: number, callback: () -> ()) -> (),
+	stop: () -> (),
+	isRunning: () -> boolean,
+	registerHotkey: (name: string, keys: { KeyCode }, callback: () -> ()) -> (),
+	unregisterHotkey: (name: string) -> (),
+}
+
+-- ═══════════════════════════════════════════════════════════════
+-- CONSTANTES
+-- ═══════════════════════════════════════════════════════════════
+
+local KEYUP: number = 0x0002
+local UNICODE: number = 0x0004
+
+local MOUSE_LDOWN: number = 0x0002
+local MOUSE_LUP: number = 0x0004
+local MOUSE_RDOWN: number = 0x0008
+local MOUSE_RUP: number = 0x0010
+local MOUSE_MDOWN: number = 0x0020
+local MOUSE_MUP: number = 0x0040
+local MOUSE_WHEEL: number = 0x0800
+local MOUSE_MOVE: number = 0x0001
+local MOUSE_ABS: number = 0x8000
+
+local VK_MAP: { [string]: number } = {
 	backspace = 0x08,
 	tab = 0x09,
 	enter = 0x0D,
@@ -126,506 +187,730 @@ local KeyNames: { [string]: number } = {
 	["'"] = 0xDE,
 }
 
-local Keys = {
-	windows = {
-		BACKSPACE = 0x08,
-		TAB = 0x09,
-		ENTER = 0x0D,
-		SHIFT = 0x10,
-		CONTROL = 0x11,
-		ALT = 0x12,
-		ESC = 0x1B,
-		SPACE = 0x20,
-		LEFT = 0x25,
-		UP = 0x26,
-		RIGHT = 0x27,
-		DOWN = 0x28,
-		DELETE = 0x2E,
-		A = 0x41,
-		B = 0x42,
-		C = 0x43,
-		D = 0x44,
-		E = 0x45,
-		F = 0x46,
-		G = 0x47,
-		H = 0x48,
-		I = 0x49,
-		J = 0x4A,
-		K = 0x4B,
-		L = 0x4C,
-		M = 0x4D,
-		N = 0x4E,
-		O = 0x4F,
-		P = 0x50,
-		Q = 0x51,
-		R = 0x52,
-		S = 0x53,
-		T = 0x54,
-		U = 0x55,
-		V = 0x56,
-		W = 0x57,
-		X = 0x58,
-		Y = 0x59,
-		Z = 0x5A,
-		F1 = 0x70,
-		F2 = 0x71,
-		F3 = 0x72,
-		F4 = 0x73,
-		F5 = 0x74,
-		F6 = 0x75,
-		F7 = 0x76,
-		F8 = 0x77,
-		F9 = 0x78,
-		F10 = 0x79,
-		F11 = 0x7A,
-		F12 = 0x7B,
-	},
-	linux = {
-		BACKSPACE = "BackSpace",
-		TAB = "Tab",
-		ENTER = "Return",
-		SHIFT = "Shift_L",
-		CONTROL = "Control_L",
-		ALT = "Alt_L",
-		ESC = "Escape",
-		SPACE = "space",
-		LEFT = "Left",
-		UP = "Up",
-		RIGHT = "Right",
-		DOWN = "Down",
-		DELETE = "Delete",
-		A = "a",
-		B = "b",
-		C = "c",
-		D = "d",
-		E = "e",
-		F = "f",
-		G = "g",
-		H = "h",
-		I = "i",
-		J = "j",
-		K = "k",
-		L = "l",
-		M = "m",
-		N = "n",
-		O = "o",
-		P = "p",
-		Q = "q",
-		R = "r",
-		S = "s",
-		T = "t",
-		U = "u",
-		V = "v",
-		W = "w",
-		X = "x",
-		Y = "y",
-		Z = "z",
-		F1 = "F1",
-		F2 = "F2",
-		F3 = "F3",
-		F4 = "F4",
-		F5 = "F5",
-		F6 = "F6",
-		F7 = "F7",
-		F8 = "F8",
-		F9 = "F9",
-		F10 = "F10",
-		F11 = "F11",
-		F12 = "F12",
-	},
+local WINDOWS_KEYS: { [string]: number | string } = {
+	BACKSPACE = 0x08,
+	TAB = 0x09,
+	ENTER = 0x0D,
+	SHIFT = 0x10,
+	CONTROL = 0x11,
+	ALT = 0x12,
+	ESC = 0x1B,
+	SPACE = 0x20,
+	LEFT = 0x25,
+	UP = 0x26,
+	RIGHT = 0x27,
+	DOWN = 0x28,
+	DELETE = 0x2E,
+	A = 0x41,
+	B = 0x42,
+	C = 0x43,
+	D = 0x44,
+	E = 0x45,
+	F = 0x46,
+	G = 0x47,
+	H = 0x48,
+	I = 0x49,
+	J = 0x4A,
+	K = 0x4B,
+	L = 0x4C,
+	M = 0x4D,
+	N = 0x4E,
+	O = 0x4F,
+	P = 0x50,
+	Q = 0x51,
+	R = 0x52,
+	S = 0x53,
+	T = 0x54,
+	U = 0x55,
+	V = 0x56,
+	W = 0x57,
+	X = 0x58,
+	Y = 0x59,
+	Z = 0x5A,
+	F1 = 0x70,
+	F2 = 0x71,
+	F3 = 0x72,
+	F4 = 0x73,
+	F5 = 0x74,
+	F6 = 0x75,
+	F7 = 0x76,
+	F8 = 0x77,
+	F9 = 0x78,
+	F10 = 0x79,
+	F11 = 0x7A,
+	F12 = 0x7B,
 }
-Keys.macos = Keys.linux
 
-local Input: { [string]: any } = {}
-Input.Key = Keys[process.os] or Keys.windows
+local LINUX_KEYS: { [string]: number | string } = {
+	BACKSPACE = "BackSpace",
+	TAB = "Tab",
+	ENTER = "Return",
+	SHIFT = "Shift_L",
+	CONTROL = "Control_L",
+	ALT = "Alt_L",
+	ESC = "Escape",
+	SPACE = "space",
+	LEFT = "Left",
+	UP = "Up",
+	RIGHT = "Right",
+	DOWN = "Down",
+	DELETE = "Delete",
+	A = "a",
+	B = "b",
+	C = "c",
+	D = "d",
+	E = "e",
+	F = "f",
+	G = "g",
+	H = "h",
+	I = "i",
+	J = "j",
+	K = "k",
+	L = "l",
+	M = "m",
+	N = "n",
+	O = "o",
+	P = "p",
+	Q = "q",
+	R = "r",
+	S = "s",
+	T = "t",
+	U = "u",
+	V = "v",
+	W = "w",
+	X = "x",
+	Y = "y",
+	Z = "z",
+	F1 = "F1",
+	F2 = "F2",
+	F3 = "F3",
+	F4 = "F4",
+	F5 = "F5",
+	F6 = "F6",
+	F7 = "F7",
+	F8 = "F8",
+	F9 = "F9",
+	F10 = "F10",
+	F11 = "F11",
+	F12 = "F12",
+}
 
-local _running = true
+-- ═══════════════════════════════════════════════════════════════
+-- ESTADO GLOBAL
+-- ═══════════════════════════════════════════════════════════════
+
+local _running: boolean = true
 local _escThread: thread? = nil
+local _pointBuffer: any = nil
+local _user32: any = nil
+local _kernel32: any = nil
+local _screenW: number = 0
+local _screenH: number = 0
+
+-- ═══════════════════════════════════════════════════════════════
+-- UTILITÁRIOS
+-- ═══════════════════════════════════════════════════════════════
 
 local function resolveKey(key: KeyCode): number
 	if type(key) == "number" then
 		return key
 	end
-	if type(key) == "string" then
-		local k = KeyNames[key:lower()]
-		if k then
-			return k
-		end
-		if #key == 1 then
-			return string.byte(key:upper()) or 0
-		end
+	local str = key :: string
+	local vk = VK_MAP[string.lower(str)]
+	if vk then
+		return vk
+	end
+	if #str == 1 then
+		return string.byte(string.upper(str)) or 0
 	end
 	return 0
 end
 
-function Input.hotkey(...: KeyCode): Hotkey
-	local keys = { ... }
-	local codes: { number } = {}
-	for _, k in keys do
-		table.insert(codes, resolveKey(k))
+local function utf8ToCodepoints(str: string): { number }
+	local codepoints: { number } = {}
+	local i, len = 1, #str
+	while i <= len do
+		local b1 = string.byte(str, i) :: number
+		local cp: number
+		local size: number
+		if b1 < 0x80 then
+			cp, size = b1, 1
+		elseif b1 < 0xE0 then
+			local b2 = string.byte(str, i + 1) or 0
+			cp = bit32.bor(bit32.lshift(bit32.band(b1, 0x1F), 6), bit32.band(b2, 0x3F))
+			size = 2
+		elseif b1 < 0xF0 then
+			local b2 = string.byte(str, i + 1) or 0
+			local b3 = string.byte(str, i + 2) or 0
+			cp = bit32.bor(
+				bit32.lshift(bit32.band(b1, 0x0F), 12),
+				bit32.lshift(bit32.band(b2, 0x3F), 6),
+				bit32.band(b3, 0x3F)
+			)
+			size = 3
+		else
+			local b2 = string.byte(str, i + 1) or 0
+			local b3 = string.byte(str, i + 2) or 0
+			local b4 = string.byte(str, i + 3) or 0
+			cp = bit32.bor(
+				bit32.lshift(bit32.band(b1, 0x07), 18),
+				bit32.lshift(bit32.band(b2, 0x3F), 12),
+				bit32.lshift(bit32.band(b3, 0x3F), 6),
+				bit32.band(b4, 0x3F)
+			)
+			size = 4
+		end
+		table.insert(codepoints, cp)
+		i += size
 	end
-	local h: Hotkey = {
-		keys = keys,
-		enabled = true,
-		Fire = function(self)
-			if process.os == "windows" then
-				local u32 = ffi.open("user32.dll")
-				for _, c in codes do
-					u32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, c, 0, 0, 0)
-				end
-				task.wait(0.01)
-				for i = #codes, 1, -1 do
-					u32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, codes[i], 0, 0x0002, 0)
-				end
-			end
-		end,
-		Enable = function(self)
-			self.enabled = true
-		end,
-		Disable = function(self)
-			self.enabled = false
-		end,
-		IsEnabled = function(self)
-			return self.enabled
-		end,
-	}
-	return h
+	return codepoints
 end
 
-if process.os == "windows" then
-	local user32, kernel32 = ffi.open("user32.dll"), ffi.open("kernel32.dll")
-	local KEYUP, UNICODE = 0x0002, 0x0004
-	local M_LDOWN, M_LUP, M_RDOWN, M_RUP, M_MDOWN, M_MUP = 0x0002, 0x0004, 0x0008, 0x0010, 0x0020, 0x0040
-	local M_WHEEL, M_MOVE, M_ABS = 0x0800, 0x0001, 0x8000
+local function linearEasing(t: number): number
+	return t
+end
 
-	function Input.wait(ms: number)
-		kernel32:call("Sleep", "void", { "u32" }, ms)
+local function getMouseFlag(button: MouseButton?, down: boolean): number
+	local b: MouseButton = button or "left"
+	if b == "left" then
+		return if down then MOUSE_LDOWN else MOUSE_LUP
+	elseif b == "right" then
+		return if down then MOUSE_RDOWN else MOUSE_RUP
 	end
-	function Input.down(key: KeyCode)
-		local c = resolveKey(key)
-		if c > 0 then
-			user32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, c, 0, 0, 0)
-		end
-	end
-	function Input.up(key: KeyCode)
-		local c = resolveKey(key)
-		if c > 0 then
-			user32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, c, 0, KEYUP, 0)
-		end
-	end
-	function Input.tap(key: KeyCode)
-		Input.down(key)
-		Input.wait(10)
-		Input.up(key)
-	end
-	Input.press = Input.tap
+	return if down then MOUSE_MDOWN else MOUSE_MUP
+end
 
-	local function utf8Decode(str: string): { number }
-		local cp, i, len = {}, 1, #str
-		while i <= len do
-			local b1 = string.byte(str, i) :: number
-			local c, n
-			if b1 < 0x80 then
-				c, n = b1, 1
-			elseif b1 < 0xE0 then
-				c, n =
-					bit32.bor(bit32.lshift(bit32.band(b1, 0x1F), 6), bit32.band(string.byte(str, i + 1) or 0, 0x3F)), 2
-			elseif b1 < 0xF0 then
-				c, n =
-					bit32.bor(
-						bit32.lshift(bit32.band(b1, 0x0F), 12),
-						bit32.lshift(bit32.band(string.byte(str, i + 1) or 0, 0x3F), 6),
-						bit32.band(string.byte(str, i + 2) or 0, 0x3F)
-					),
-					3
-			else
-				c, n =
-					bit32.bor(
-						bit32.lshift(bit32.band(b1, 0x07), 18),
-						bit32.lshift(bit32.band(string.byte(str, i + 1) or 0, 0x3F), 12),
-						bit32.lshift(bit32.band(string.byte(str, i + 2) or 0, 0x3F), 6),
-						bit32.band(string.byte(str, i + 3) or 0, 0x3F)
-					),
-					4
-			end
-			table.insert(cp, c)
-			i += n
-		end
-		return cp
+-- ═══════════════════════════════════════════════════════════════
+-- WINDOWS
+-- ═══════════════════════════════════════════════════════════════
+
+local function createWindowsInput(): InputModule
+	if not _user32 then
+		_user32 = ffi.open("user32.dll")
+	end
+	if not _kernel32 then
+		_kernel32 = ffi.open("kernel32.dll")
+	end
+	local u32: any = _user32
+	local k32: any = _kernel32
+
+	if _screenW == 0 then
+		_screenW = u32:call("GetSystemMetrics", "i32", { "i32" }, 0)
+		_screenH = u32:call("GetSystemMetrics", "i32", { "i32" }, 1)
 	end
 
-	function Input.write(text: string, delayMs: number?)
+	local function wait(ms: number)
+		k32:call("Sleep", "void", { "u32" }, ms)
+	end
+
+	local function keyDown(key: KeyCode)
+		local vk = resolveKey(key)
+		if vk > 0 then
+			u32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, vk, 0, 0, 0)
+		end
+	end
+
+	local function keyUp(key: KeyCode)
+		local vk = resolveKey(key)
+		if vk > 0 then
+			u32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, vk, 0, KEYUP, 0)
+		end
+	end
+
+	local function tap(key: KeyCode)
+		keyDown(key)
+		wait(10)
+		keyUp(key)
+	end
+
+	local function writeText(text: string, delayMs: number?)
 		local delay = delayMs or 5
-		for _, c in utf8Decode(text) do
-			user32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, 0, c, UNICODE, 0)
-			Input.wait(delay)
-			user32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, 0, c, UNICODE + KEYUP, 0)
-			Input.wait(delay)
+		for _, cp in utf8ToCodepoints(text) do
+			u32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, 0, cp, UNICODE, 0)
+			wait(delay)
+			u32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, 0, cp, UNICODE + KEYUP, 0)
+			wait(delay)
 		end
 	end
-	Input.typeText = Input.write
 
-	function Input.combo(...: KeyCode)
-		local k = { ... }
-		for _, key in k do
-			Input.down(key)
-			Input.wait(10)
+	local function combo(...: KeyCode)
+		local keys = { ... }
+		for _, key in keys do
+			keyDown(key)
+			wait(10)
 		end
-		for i = #k, 1, -1 do
-			Input.up(k[i])
-			Input.wait(10)
+		for i = #keys, 1, -1 do
+			keyUp(keys[i])
+			wait(10)
 		end
 	end
-	function Input.isKeyDown(key: KeyCode): boolean
-		local c = resolveKey(key)
-		return c > 0 and bit32.band(user32:call("GetAsyncKeyState", "i32", { "i32" }, c), 0x8000) ~= 0
+
+	local function isKeyDown(key: KeyCode): boolean
+		local vk = resolveKey(key)
+		if vk <= 0 then
+			return false
+		end
+		local state: number = u32:call("GetAsyncKeyState", "i32", { "i32" }, vk)
+		return bit32.band(state, 0x8000) ~= 0
 	end
 
-	function Input.mousePosition(): Point
-		local buf = ffi.buffer(8)
-		user32:call("GetCursorPos", "i32", { "pointer" }, buf.ptr)
-		return { x = buf:read(0, "i32"), y = buf:read(4, "i32") }
+	local function mousePosition(): Point
+		if not _pointBuffer then
+			_pointBuffer = ffi.buffer(8)
+		end
+		u32:call("GetCursorPos", "i32", { "pointer" }, _pointBuffer.ptr)
+		return { x = _pointBuffer:read(0, "i32"), y = _pointBuffer:read(4, "i32") }
 	end
 
-	function Input.mouseMove(x: number, y: number, opts: MoveOptions?)
-		local o = opts or {}
-		local dur = o.duration or 0
-		local sw = user32:call("GetSystemMetrics", "i32", { "i32" }, 0)
-		local sh = user32:call("GetSystemMetrics", "i32", { "i32" }, 1)
-		if dur <= 0 then
-			user32:call(
-				"mouse_event",
-				"void",
-				{ "u32", "u32", "u32", "u32", "u64" },
-				M_MOVE + M_ABS,
-				math.floor((x * 65535) / sw),
-				math.floor((y * 65535) / sh),
-				0,
-				0
-			)
-			if o.onComplete then
-				o.onComplete()
+	local function mouseMove(x: number, y: number, opts: MoveOptions?)
+		local duration: number = 0
+		local onComplete: (() -> ())? = nil
+		local onError: ((string) -> ())? = nil
+		local easing: EasingFn = linearEasing
+
+		if opts then
+			duration = opts.duration or 0
+			onComplete = opts.onComplete
+			onError = opts.onError
+			if opts.easing then
+				easing = opts.easing
 			end
-		else
-			task.spawn(function()
-				local ok, err = pcall(function()
-					local sp = Input.mousePosition()
-					local steps = math.max(10, math.floor(dur / 10))
-					local ease = o.easing == "ease"
-							and function(t: number)
-								return t < 0.5 and 2 * t * t or 1 - (-2 * t + 2) ^ 2 / 2
-							end
-						or function(t: number)
-							return t
-						end
-					for i = 1, steps do
-						if not _running then
-							break
-						end
-						local t = ease(i / steps)
-						user32:call(
-							"mouse_event",
-							"void",
-							{ "u32", "u32", "u32", "u32", "u64" },
-							M_MOVE + M_ABS,
-							math.floor(((sp.x + (x - sp.x) * t) * 65535) / sw),
-							math.floor(((sp.y + (y - sp.y) * t) * 65535) / sh),
-							0,
-							0
-						)
-						Input.wait(math.floor(dur / steps))
+		end
+
+		if duration <= 0 then
+			local ax = math.floor((x * 65535) / _screenW)
+			local ay = math.floor((y * 65535) / _screenH)
+			u32:call("mouse_event", "void", { "u32", "u32", "u32", "u32", "u64" }, MOUSE_MOVE + MOUSE_ABS, ax, ay, 0, 0)
+			if onComplete then
+				onComplete()
+			end
+			return
+		end
+
+		task.spawn(function()
+			local ok, err = pcall(function()
+				local start = mousePosition()
+				local steps = math.max(10, math.floor(duration / 10))
+				for i = 1, steps do
+					if not _running then
+						break
 					end
-				end)
-				if ok and o.onComplete then
-					o.onComplete()
-				elseif not ok and o.onError then
-					o.onError(tostring(err))
+					local t = easing(i / steps)
+					local cx = start.x + (x - start.x) * t
+					local cy = start.y + (y - start.y) * t
+					local ax = math.floor((cx * 65535) / _screenW)
+					local ay = math.floor((cy * 65535) / _screenH)
+					u32:call(
+						"mouse_event",
+						"void",
+						{ "u32", "u32", "u32", "u32", "u64" },
+						MOUSE_MOVE + MOUSE_ABS,
+						ax,
+						ay,
+						0,
+						0
+					)
+					wait(math.floor(duration / steps))
 				end
 			end)
-		end
+			if ok and onComplete then
+				onComplete()
+			elseif not ok and onError then
+				onError(tostring(err))
+			end
+		end)
 	end
 
-	local function mf(b: MouseButton?, down: boolean): number
-		b = b or "left"
-		if b == "left" then
-			return down and M_LDOWN or M_LUP
-		elseif b == "right" then
-			return down and M_RDOWN or M_RUP
-		else
-			return down and M_MDOWN or M_MUP
-		end
-	end
-	function Input.mouseDown(b: MouseButton?)
-		user32:call("mouse_event", "void", { "u32", "u32", "u32", "u32", "u64" }, mf(b, true), 0, 0, 0, 0)
-	end
-	function Input.mouseUp(b: MouseButton?)
-		user32:call("mouse_event", "void", { "u32", "u32", "u32", "u32", "u64" }, mf(b, false), 0, 0, 0, 0)
-	end
-	function Input.mouseClick(b: MouseButton?)
-		Input.mouseDown(b)
-		Input.wait(10)
-		Input.mouseUp(b)
-	end
-	function Input.mouseDoubleClick(b: MouseButton?)
-		Input.mouseClick(b)
-		Input.wait(50)
-		Input.mouseClick(b)
-	end
-	function Input.mouseScroll(d: number)
-		user32:call("mouse_event", "void", { "u32", "u32", "u32", "i32", "u64" }, M_WHEEL, 0, 0, d * 120, 0)
-	end
-	function Input.mouseDrag(tx: number, ty: number, b: MouseButton?, dur: number?)
-		Input.mouseDown(b)
-		Input.mouseMove(tx, ty, { duration = dur or 200 })
-		task.wait((dur or 200) / 1000 + 0.1)
-		Input.mouseUp(b)
+	local function mouseDown(button: MouseButton?)
+		u32:call("mouse_event", "void", { "u32", "u32", "u32", "u32", "u64" }, getMouseFlag(button, true), 0, 0, 0, 0)
 	end
 
-	function Input.onEscapeHold(secs: number, cb: () -> ())
+	local function mouseUp(button: MouseButton?)
+		u32:call("mouse_event", "void", { "u32", "u32", "u32", "u32", "u64" }, getMouseFlag(button, false), 0, 0, 0, 0)
+	end
+
+	local function mouseClick(button: MouseButton?)
+		mouseDown(button)
+		wait(10)
+		mouseUp(button)
+	end
+
+	local function mouseDoubleClick(button: MouseButton?)
+		mouseClick(button)
+		wait(50)
+		mouseClick(button)
+	end
+
+	local function mouseScroll(delta: number)
+		u32:call("mouse_event", "void", { "u32", "u32", "u32", "i32", "u64" }, MOUSE_WHEEL, 0, 0, delta * 120, 0)
+	end
+
+	local function mouseDrag(tx: number, ty: number, button: MouseButton?, duration: number?)
+		local dur = duration or 200
+		mouseDown(button)
+		mouseMove(tx, ty, { duration = dur })
+		task.wait(dur / 1000 + 0.1)
+		mouseUp(button)
+	end
+
+	local function hotkey(...: KeyCode): Hotkey
+		local keys = { ... }
+		local codes: { number } = {}
+		for _, k in keys do
+			table.insert(codes, resolveKey(k))
+		end
+		return {
+			keys = keys,
+			codes = codes,
+			enabled = true,
+			Fire = function(self: Hotkey)
+				if not self.enabled then
+					return
+				end
+				for _, vk in self.codes do
+					u32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, vk, 0, 0, 0)
+				end
+				wait(10)
+				for i = #self.codes, 1, -1 do
+					u32:call("keybd_event", "void", { "i32", "i32", "i32", "u64" }, self.codes[i], 0, KEYUP, 0)
+				end
+			end,
+			Enable = function(self: Hotkey)
+				self.enabled = true
+			end,
+			Disable = function(self: Hotkey)
+				self.enabled = false
+			end,
+			IsEnabled = function(self: Hotkey): boolean
+				return self.enabled
+			end,
+		}
+	end
+
+	local function onEscapeHold(secs: number, callback: () -> ())
 		if _escThread then
 			task.cancel(_escThread)
 		end
 		_escThread = task.spawn(function()
-			local hold: number? = nil
+			local holdStart: number? = nil
+			local thresholdMs = secs * 1000
 			while _running do
-				if Input.isKeyDown(0x1B) then
-					if not hold then
-						hold = os.clock() * 1000
-					elseif (os.clock() * 1000 - hold) >= secs * 1000 then
+				if isKeyDown(0x1B) then
+					if not holdStart then
+						holdStart = os.clock() * 1000
+					elseif (os.clock() * 1000 - (holdStart :: number)) >= thresholdMs then
 						_running = false
-						cb()
+						callback()
 						break
 					end
 				else
-					hold = nil
+					holdStart = nil
 				end
 				task.wait(0.05)
 			end
 		end)
 	end
 
-	function Input.registerHotkey(name: string, keys: { KeyCode }, cb: () -> ()) end -- stub
-	function Input.unregisterHotkey(name: string) end -- stub
-elseif process.os == "linux" then
-	function Input.wait(ms: number)
+	return {
+		Key = WINDOWS_KEYS,
+		wait = wait,
+		down = keyDown,
+		up = keyUp,
+		tap = tap,
+		press = tap,
+		write = writeText,
+		typeText = writeText,
+		combo = combo,
+		hotkey = hotkey,
+		isKeyDown = isKeyDown,
+		mousePosition = mousePosition,
+		mouseMove = mouseMove,
+		mouseDown = mouseDown,
+		mouseUp = mouseUp,
+		mouseClick = mouseClick,
+		mouseDoubleClick = mouseDoubleClick,
+		mouseScroll = mouseScroll,
+		mouseDrag = mouseDrag,
+		onEscapeHold = onEscapeHold,
+		stop = function()
+			_running = false
+		end,
+		isRunning = function(): boolean
+			return _running
+		end,
+		registerHotkey = function(_name: string, _keys: { KeyCode }, _cb: () -> ()) end,
+		unregisterHotkey = function(_name: string) end,
+	}
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- LINUX
+-- ═══════════════════════════════════════════════════════════════
+
+local function createLinuxInput(): InputModule
+	local function wait(ms: number)
 		task.wait(ms / 1000)
 	end
-	function Input.down(k: KeyCode)
-		process.exec("xdotool", { "keydown", tostring(k) })
+
+	local function keyDown(key: KeyCode)
+		process.exec("xdotool", { "keydown", tostring(key) })
 	end
-	function Input.up(k: KeyCode)
-		process.exec("xdotool", { "keyup", tostring(k) })
+
+	local function keyUp(key: KeyCode)
+		process.exec("xdotool", { "keyup", tostring(key) })
 	end
-	function Input.tap(k: KeyCode)
-		process.exec("xdotool", { "key", tostring(k) })
+
+	local function tap(key: KeyCode)
+		process.exec("xdotool", { "key", tostring(key) })
 	end
-	Input.press = Input.tap
-	function Input.write(t: string, _: number?)
-		process.exec("xdotool", { "type", "--clearmodifiers", t })
+
+	local function writeText(text: string, _delayMs: number?)
+		process.exec("xdotool", { "type", "--clearmodifiers", text })
 	end
-	Input.typeText = Input.write
-	function Input.combo(...: KeyCode)
-		local k = { ... }
-		for _, key in k do
-			Input.down(key)
+
+	local function combo(...: KeyCode)
+		local keys = { ... }
+		for _, key in keys do
+			keyDown(key)
 		end
-		for i = #k, 1, -1 do
-			Input.up(k[i])
+		for i = #keys, 1, -1 do
+			keyUp(keys[i])
 		end
 	end
-	function Input.isKeyDown(_: KeyCode): boolean
-		return false
-	end
-	function Input.mousePosition(): Point
+
+	local function mousePosition(): Point
 		local r = process.exec("xdotool", { "getmouselocation" })
-		return r.ok and { x = tonumber(r.stdout:match("x:(%d+)")) or 0, y = tonumber(r.stdout:match("y:(%d+)")) or 0 }
-			or { x = 0, y = 0 }
+		if r.ok then
+			return {
+				x = tonumber(r.stdout:match("x:(%d+)")) or 0,
+				y = tonumber(r.stdout:match("y:(%d+)")) or 0,
+			}
+		end
+		return { x = 0, y = 0 }
 	end
-	function Input.mouseMove(x: number, y: number, opts: MoveOptions?)
+
+	local function getButton(b: MouseButton?): string
+		local btn: MouseButton = b or "left"
+		if btn == "left" then
+			return "1"
+		elseif btn == "right" then
+			return "3"
+		end
+		return "2"
+	end
+
+	local function mouseMove(x: number, y: number, opts: MoveOptions?)
 		process.exec("xdotool", { "mousemove", tostring(x), tostring(y) })
 		if opts and opts.onComplete then
 			opts.onComplete()
 		end
 	end
-	local bm = { left = "1", right = "3", middle = "2" }
-	function Input.mouseDown(b: MouseButton?)
-		process.exec("xdotool", { "mousedown", bm[b or "left"] })
+
+	local function mouseDown(button: MouseButton?)
+		process.exec("xdotool", { "mousedown", getButton(button) })
 	end
-	function Input.mouseUp(b: MouseButton?)
-		process.exec("xdotool", { "mouseup", bm[b or "left"] })
+
+	local function mouseUp(button: MouseButton?)
+		process.exec("xdotool", { "mouseup", getButton(button) })
 	end
-	function Input.mouseClick(b: MouseButton?)
-		process.exec("xdotool", { "click", bm[b or "left"] })
+
+	local function mouseClick(button: MouseButton?)
+		process.exec("xdotool", { "click", getButton(button) })
 	end
-	function Input.mouseDoubleClick(b: MouseButton?)
-		process.exec("xdotool", { "click", "--repeat", "2", bm[b or "left"] })
+
+	local function mouseDoubleClick(button: MouseButton?)
+		process.exec("xdotool", { "click", "--repeat", "2", getButton(button) })
 	end
-	function Input.mouseScroll(d: number)
-		for _ = 1, math.abs(d) do
-			process.exec("xdotool", { "click", d > 0 and "4" or "5" })
+
+	local function mouseScroll(delta: number)
+		local btn = if delta > 0 then "4" else "5"
+		for _ = 1, math.abs(delta) do
+			process.exec("xdotool", { "click", btn })
 		end
 	end
-	function Input.mouseDrag(tx: number, ty: number, b: MouseButton?, dur: number?)
-		Input.mouseDown(b)
-		Input.mouseMove(tx, ty)
-		Input.mouseUp(b)
+
+	local function mouseDrag(tx: number, ty: number, button: MouseButton?, _duration: number?)
+		mouseDown(button)
+		mouseMove(tx, ty)
+		mouseUp(button)
 	end
-	function Input.onEscapeHold(_: number, _: () -> ()) end
-	function Input.registerHotkey(_: string, _: { KeyCode }, _: () -> ()) end
-	function Input.unregisterHotkey(_: string) end
-elseif process.os == "macos" then
-	function Input.wait(ms: number)
+
+	local function hotkey(...: KeyCode): Hotkey
+		local keys = { ... }
+		local codes: { number } = {}
+		for _, k in keys do
+			table.insert(codes, resolveKey(k))
+		end
+		return {
+			keys = keys,
+			codes = codes,
+			enabled = true,
+			Fire = function(self: Hotkey)
+				if not self.enabled then
+					return
+				end
+				combo(table.unpack(self.keys))
+			end,
+			Enable = function(self: Hotkey)
+				self.enabled = true
+			end,
+			Disable = function(self: Hotkey)
+				self.enabled = false
+			end,
+			IsEnabled = function(self: Hotkey): boolean
+				return self.enabled
+			end,
+		}
+	end
+
+	return {
+		Key = LINUX_KEYS,
+		wait = wait,
+		down = keyDown,
+		up = keyUp,
+		tap = tap,
+		press = tap,
+		write = writeText,
+		typeText = writeText,
+		combo = combo,
+		hotkey = hotkey,
+		isKeyDown = function(_key: KeyCode): boolean
+			return false
+		end,
+		mousePosition = mousePosition,
+		mouseMove = mouseMove,
+		mouseDown = mouseDown,
+		mouseUp = mouseUp,
+		mouseClick = mouseClick,
+		mouseDoubleClick = mouseDoubleClick,
+		mouseScroll = mouseScroll,
+		mouseDrag = mouseDrag,
+		onEscapeHold = function(_secs: number, _cb: () -> ()) end,
+		stop = function()
+			_running = false
+		end,
+		isRunning = function(): boolean
+			return _running
+		end,
+		registerHotkey = function(_name: string, _keys: { KeyCode }, _cb: () -> ()) end,
+		unregisterHotkey = function(_name: string) end,
+	}
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- MACOS
+-- ═══════════════════════════════════════════════════════════════
+
+local function createMacOSInput(): InputModule
+	local function wait(ms: number)
 		task.wait(ms / 1000)
 	end
-	function Input.down(_: KeyCode) end
-	function Input.up(_: KeyCode) end
-	function Input.tap(k: KeyCode)
-		process.exec("osascript", { "-e", `tell application "System Events" to keystroke "{k}"` })
+
+	local function noopKey(_key: KeyCode) end
+
+	local function tap(key: KeyCode)
+		process.exec("osascript", { "-e", `tell application "System Events" to keystroke "{key}"` })
 	end
-	Input.press = Input.tap
-	function Input.write(t: string, _: number?)
-		process.exec("osascript", { "-e", `tell application "System Events" to keystroke "{t}"` })
+
+	local function writeText(text: string, _delayMs: number?)
+		process.exec("osascript", { "-e", `tell application "System Events" to keystroke "{text}"` })
 	end
-	Input.typeText = Input.write
-	function Input.combo(...: KeyCode)
+
+	local function combo(...: KeyCode)
 		for _, k in { ... } do
-			Input.tap(k)
-			Input.wait(50)
+			tap(k)
+			wait(50)
 		end
 	end
-	function Input.isKeyDown(_: KeyCode): boolean
-		return false
-	end
-	function Input.mousePosition(): Point
-		return { x = 0, y = 0 }
-	end
-	function Input.mouseMove(_: number, _: number, opts: MoveOptions?)
-		if opts and opts.onComplete then
-			opts.onComplete()
+
+	local function hotkey(...: KeyCode): Hotkey
+		local keys = { ... }
+		local codes: { number } = {}
+		for _, k in keys do
+			table.insert(codes, resolveKey(k))
 		end
+		return {
+			keys = keys,
+			codes = codes,
+			enabled = true,
+			Fire = function(self: Hotkey)
+				if not self.enabled then
+					return
+				end
+				combo(table.unpack(self.keys))
+			end,
+			Enable = function(self: Hotkey)
+				self.enabled = true
+			end,
+			Disable = function(self: Hotkey)
+				self.enabled = false
+			end,
+			IsEnabled = function(self: Hotkey): boolean
+				return self.enabled
+			end,
+		}
 	end
-	function Input.mouseDown(_: MouseButton?) end
-	function Input.mouseUp(_: MouseButton?) end
-	function Input.mouseClick(_: MouseButton?)
-		process.exec("osascript", { "-e", 'tell application "System Events" to click' })
-	end
-	function Input.mouseDoubleClick(b: MouseButton?)
-		Input.mouseClick(b)
-		Input.wait(50)
-		Input.mouseClick(b)
-	end
-	function Input.mouseScroll(_: number) end
-	function Input.mouseDrag(_: number, _: number, _: MouseButton?, _: number?) end
-	function Input.onEscapeHold(_: number, _: () -> ()) end
-	function Input.registerHotkey(_: string, _: { KeyCode }, _: () -> ()) end
-	function Input.unregisterHotkey(_: string) end
+
+	local function noopMouse(_button: MouseButton?) end
+
+	return {
+		Key = LINUX_KEYS,
+		wait = wait,
+		down = noopKey,
+		up = noopKey,
+		tap = tap,
+		press = tap,
+		write = writeText,
+		typeText = writeText,
+		combo = combo,
+		hotkey = hotkey,
+		isKeyDown = function(_key: KeyCode): boolean
+			return false
+		end,
+		mousePosition = function(): Point
+			return { x = 0, y = 0 }
+		end,
+		mouseMove = function(_x: number, _y: number, opts: MoveOptions?)
+			if opts and opts.onComplete then
+				opts.onComplete()
+			end
+		end,
+		mouseDown = noopMouse,
+		mouseUp = noopMouse,
+		mouseClick = function(_button: MouseButton?)
+			process.exec("osascript", { "-e", 'tell application "System Events" to click' })
+		end,
+		mouseDoubleClick = function(_button: MouseButton?)
+			process.exec("osascript", { "-e", 'tell application "System Events" to click' })
+			wait(50)
+			process.exec("osascript", { "-e", 'tell application "System Events" to click' })
+		end,
+		mouseScroll = function(_delta: number) end,
+		mouseDrag = function(_tx: number, _ty: number, _button: MouseButton?, _duration: number?) end,
+		onEscapeHold = function(_secs: number, _cb: () -> ()) end,
+		stop = function()
+			_running = false
+		end,
+		isRunning = function(): boolean
+			return _running
+		end,
+		registerHotkey = function(_name: string, _keys: { KeyCode }, _cb: () -> ()) end,
+		unregisterHotkey = function(_name: string) end,
+	}
 end
 
-function Input.stop()
-	_running = false
-end
-function Input.isRunning(): boolean
-	return _running
+-- ═══════════════════════════════════════════════════════════════
+-- FACTORY
+-- ═══════════════════════════════════════════════════════════════
+
+local function createInput(): InputModule
+	if process.os == "windows" then
+		return createWindowsInput()
+	elseif process.os == "linux" then
+		return createLinuxInput()
+	else
+		return createMacOSInput()
+	end
 end
 
-return Input
+return createInput()
